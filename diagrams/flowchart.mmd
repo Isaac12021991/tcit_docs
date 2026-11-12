@@ -1,0 +1,48 @@
+flowchart TD
+    subgraph Frontend["Frontend SPA (Angular 18 + Material :4200)"]
+        U["User fills form in /posts/new<br/>(Name, Description, Brief, Attachment)"]
+        B64["FileReader converts file to Base64"]
+        L["/posts List View<br/>(Local in-memory filter + Status badge)"]
+    end
+
+    subgraph Backend["Backend REST API (Golang :8080)"]
+        POST_EP["POST /posts"]
+        GET_PEND["GET /posts/pending"]
+        GET_ALL["GET /posts"]
+        DEL_EP["DELETE /posts/{id}"]
+    end
+
+    subgraph Database["Database (Google Cloud Spanner Emulator :9010 / :9020)"]
+        SPANNER[("Table: Posts<br/>PK: Id (UUIDv4)")]
+    end
+
+    subgraph Orchestrator["Orchestrator Worker (Symfony CLI: app:process-posts)"]
+        POLL["ProcessPendingPostsCommand<br/>(Polls every 5s)"]
+        BUS["Symfony Messenger Bus<br/>(ProcessPostAiBrief)"]
+        HANDLER["ProcessPostAiBriefHandler"]
+        AI["Gemini API (Category 1 Privacy)<br/>or Dynamic Random Mock (array_rand)"]
+    end
+
+    %% Creation Flow
+    U --> B64
+    B64 -->|"HTTP POST /posts (JSON camelCase)"| POST_EP
+    POST_EP -->|"Generate UUIDv4 & Insert<br/>EstadoProcesamiento = 'PENDIENTE'"| SPANNER
+    POST_EP -->|"HTTP 201 Created (Immediate response)"| L
+
+    %% Background Orchestration Flow
+    POLL -->|"HTTP GET /posts/pending"| GET_PEND
+    GET_PEND -->|"SELECT WHERE EstadoProcesamiento = 'PENDIENTE'"| SPANNER
+    SPANNER -->|"Pending Rows"| GET_PEND
+    GET_PEND -->|"JSON Array of Pending Posts"| POLL
+    POLL -->|"Dispatch Message"| BUS
+    BUS --> HANDLER
+    HANDLER -->|"Extract Objective & Target Audience"| AI
+    AI -->|"DatosExtraidosIA"| HANDLER
+    HANDLER -->|"DML UPDATE Posts:<br/>DatosExtraidosIA = @ia,<br/>EstadoProcesamiento = 'COMPLETADO'"| SPANNER
+
+    %% Listing & Deletion Flow
+    L -->|"Single HTTP GET /posts on ngOnInit"| GET_ALL
+    GET_ALL -->|"SELECT * FROM Posts"| SPANNER
+    L -->|"HTTP DELETE /posts/{id}"| DEL_EP
+    DEL_EP -->|"ReadWriteTransaction Delete"| SPANNER
+
